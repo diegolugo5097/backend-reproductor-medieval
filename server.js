@@ -19,9 +19,9 @@ const YOUTUBE_API_KEY =
 const PORT = process.env.PORT || 4000;
 
 /* ---------------- Usuario administrador ----------------
-   Cambia estos valores por los tuyos. El admin inicia sesión
-   con usuario+contraseña y recibe un token que protege los
-   controles (saltar, pausar, borrar). */
+   EN PRODUCCIÓN (Render): define ADMIN_USER y ADMIN_PASS como
+   variables de entorno en el panel de Render. NO uses los valores
+   por defecto de abajo en producción: son solo para pruebas locales. */
 const ADMIN_USER = process.env.ADMIN_USER || "medievalAlfonso";
 const ADMIN_PASS = process.env.ADMIN_PASS || "cafeMedievalAlfonso";
 
@@ -284,6 +284,9 @@ server.listen(PORT, () => {
     `\n🏰 Café Medieval backend escuchando en http://localhost:${PORT}`,
   );
   console.log(`   WebSocket en ws://localhost:${PORT}`);
+  console.log(
+    `   👤 Admin → usuario: "${ADMIN_USER}"  contraseña: "${ADMIN_PASS}"`,
+  );
   if (YOUTUBE_API_KEY === "TU_API_KEY_AQUI") {
     console.log("\n⚠️  Recuerda pegar tu YOUTUBE_API_KEY en server.js\n");
   }
