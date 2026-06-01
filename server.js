@@ -230,6 +230,102 @@ app.delete("/api/queue/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+/* ---------------- Cargar una playlist de YouTube (admin) ----------------
+   Recibe un link o ID de playlist, la expande con la YouTube Data API
+   y añade TODAS sus canciones al final de la cola. */
+function extractPlaylistId(input = "") {
+  const s = input.trim();
+  // ?list=PLxxxx  ó  &list=PLxxxx
+  const m = s.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+  // Si pegaron solo el ID (empieza por PL, UU, OL, etc.)
+  if (/^[a-zA-Z0-9_-]{12,}$/.test(s)) return s;
+  return null;
+}
+
+app.post("/api/playlist", requireAdmin, async (req, res) => {
+  if (YOUTUBE_API_KEY === "TU_API_KEY_AQUI") {
+    return res.status(500).json({ error: "Falta la API KEY de YouTube." });
+  }
+
+  const { url, addedBy } = req.body || {};
+  const playlistId = extractPlaylistId(url || "");
+  if (!playlistId) {
+    return res.status(400).json({
+      error: "No reconocí esa playlist. Pega el link completo de YouTube.",
+    });
+  }
+
+  try {
+    const songs = [];
+    let pageToken = "";
+    let pages = 0;
+
+    // Paginar hasta 4 páginas (200 videos máx) para no agotar cuota.
+    do {
+      const apiUrl =
+        "https://www.googleapis.com/youtube/v3/playlistItems?" +
+        new URLSearchParams({
+          part: "snippet",
+          maxResults: "50",
+          playlistId,
+          key: YOUTUBE_API_KEY,
+          ...(pageToken ? { pageToken } : {}),
+        });
+
+      const r = await fetch(apiUrl);
+      const data = await r.json();
+      if (data.error) {
+        return res.status(400).json({ error: data.error.message });
+      }
+
+      for (const it of data.items || []) {
+        const sn = it.snippet || {};
+        const vid = sn.resourceId?.videoId;
+        if (!vid) continue;
+        // Saltar videos privados o borrados
+        if (sn.title === "Private video" || sn.title === "Deleted video")
+          continue;
+        songs.push({
+          id: cryptoId(),
+          videoId: vid,
+          title: decodeHtml(sn.title || "Sin título"),
+          channel: decodeHtml(
+            sn.videoOwnerChannelTitle || sn.channelTitle || "",
+          ),
+          thumbnail:
+            sn.thumbnails?.medium?.url || sn.thumbnails?.default?.url || "",
+          addedBy: (addedBy || "Tabernero").slice(0, 30),
+          addedAt: Date.now(),
+        });
+      }
+
+      pageToken = data.nextPageToken || "";
+      pages++;
+    } while (pageToken && pages < 4);
+
+    if (songs.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "La playlist está vacía o es privada." });
+    }
+
+    // Añadir al final de la cola
+    queue.push(...songs);
+
+    // Si no había nada sonando, arrancar
+    if (!nowPlaying) {
+      nowPlaying = queue.shift();
+    }
+
+    broadcast();
+    res.json({ ok: true, added: songs.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al cargar la playlist." });
+  }
+});
+
 /* ---------------- Pasar a la siguiente (la usa el reproductor) ---------------- */
 app.post("/api/next", (_req, res) => {
   if (nowPlaying) history.unshift(nowPlaying);
