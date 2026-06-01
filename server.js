@@ -58,6 +58,8 @@ let queue = []; // canciones en espera: [{ id, videoId, title, channel, thumbnai
 let nowPlaying = null; // canción reproduciéndose actualmente
 let history = []; // canciones ya reproducidas (máx 50)
 let paused = false; // estado de pausa (controlado por el admin)
+let volume = 70; // volumen 0-100 (controlado por el admin)
+const loadedPlaylists = new Set(); // IDs de playlists ya cargadas en esta sesión
 
 function snapshot() {
   return {
@@ -65,6 +67,7 @@ function snapshot() {
     nowPlaying,
     queue,
     paused,
+    volume,
     history: history.slice(0, 20),
   };
 }
@@ -256,6 +259,13 @@ app.post("/api/playlist", requireAdmin, async (req, res) => {
     });
   }
 
+  // No permitir cargar la misma playlist dos veces en esta sesión
+  if (loadedPlaylists.has(playlistId)) {
+    return res
+      .status(409)
+      .json({ error: "Esa playlist ya fue cargada antes." });
+  }
+
   try {
     const songs = [];
     let pageToken = "";
@@ -312,6 +322,7 @@ app.post("/api/playlist", requireAdmin, async (req, res) => {
 
     // Añadir al final de la cola
     queue.push(...songs);
+    loadedPlaylists.add(playlistId); // marcar como cargada
 
     // Si no había nada sonando, arrancar
     if (!nowPlaying) {
@@ -353,6 +364,17 @@ app.post("/api/toggle-pause", requireAdmin, (_req, res) => {
   paused = !paused;
   broadcast();
   res.json({ ok: true, paused });
+});
+
+/* ---------------- Volumen (admin) ---------------- */
+app.post("/api/volume", requireAdmin, (req, res) => {
+  let v = Number(req.body?.volume);
+  if (Number.isNaN(v))
+    return res.status(400).json({ error: "Volumen inválido." });
+  v = Math.max(0, Math.min(100, Math.round(v)));
+  volume = v;
+  broadcast();
+  res.json({ ok: true, volume });
 });
 
 /* ---------------- Saltar / borrar todo (admin) ---------------- */
