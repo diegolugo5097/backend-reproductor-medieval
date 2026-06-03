@@ -233,6 +233,30 @@ app.delete("/api/queue/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+/* ---------------- Reordenar la cola (admin) ----------------
+   Recibe { order: [id1, id2, ...] } y reordena la cola según esa lista. */
+app.post("/api/reorder", requireAdmin, (req, res) => {
+  const order = req.body?.order;
+  if (!Array.isArray(order)) {
+    return res.status(400).json({ error: "Orden inválido." });
+  }
+  // Reconstruir la cola en el orden recibido; ignorar IDs que ya no existan
+  const byId = new Map(queue.map((s) => [s.id, s]));
+  const nueva = [];
+  for (const id of order) {
+    const song = byId.get(id);
+    if (song) {
+      nueva.push(song);
+      byId.delete(id);
+    }
+  }
+  // Si quedó alguna canción que no venía en la lista (por si acaso), la añadimos al final
+  for (const song of byId.values()) nueva.push(song);
+  queue = nueva;
+  broadcast();
+  res.json({ ok: true });
+});
+
 /* ---------------- Cargar una playlist de YouTube (admin) ----------------
    Recibe un link o ID de playlist, la expande con la YouTube Data API
    y añade TODAS sus canciones al final de la cola. */
