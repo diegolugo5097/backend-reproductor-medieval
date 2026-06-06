@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { WebSocketServer } from "ws";
 import http from "http";
+import fs from "fs";
 
 /* ============================================================
    CAFÉ MEDIEVAL · Backend
@@ -61,6 +62,42 @@ let paused = false; // estado de pausa (controlado por el admin)
 let volume = 70; // volumen 0-100 (controlado por el admin)
 const loadedPlaylists = new Set(); // IDs de playlists ya cargadas en esta sesión
 
+/* ---------------- Ajustes de volumen por canción ----------------
+   Mapa videoId -> ganancia (0-100). Compartido entre taberneros y
+   guardado en un archivo para que sobreviva reinicios por inactividad.
+   Nota: en Render free, el archivo se reinicia al hacer redeploy. */
+const VOL_FILE = "./song-volumes.json";
+let songVolumes = {};
+
+function loadSongVolumes() {
+  try {
+    if (fs.existsSync(VOL_FILE)) {
+      songVolumes = JSON.parse(fs.readFileSync(VOL_FILE, "utf8")) || {};
+      console.log(
+        `   🔊 Cargados ${Object.keys(songVolumes).length} ajustes de volumen por canción`,
+      );
+    }
+  } catch (e) {
+    console.error("No se pudo leer song-volumes.json:", e.message);
+    songVolumes = {};
+  }
+}
+
+let saveTimer = null;
+function saveSongVolumes() {
+  // Guardado diferido para no escribir el archivo en cada ajuste
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      fs.writeFileSync(VOL_FILE, JSON.stringify(songVolumes));
+    } catch (e) {
+      console.error("No se pudo guardar song-volumes.json:", e.message);
+    }
+  }, 500);
+}
+
+loadSongVolumes();
+
 function snapshot() {
   return {
     type: "state",
@@ -68,6 +105,7 @@ function snapshot() {
     queue,
     paused,
     volume,
+    songVolumes,
     history: history.slice(0, 20),
   };
 }
@@ -278,9 +316,11 @@ app.post("/api/playlist", requireAdmin, async (req, res) => {
   const { url, addedBy } = req.body || {};
   const playlistId = extractPlaylistId(url || "");
   if (!playlistId) {
-    return res.status(400).json({
-      error: "No reconocí esa playlist. Pega el link completo de YouTube.",
-    });
+    return res
+      .status(400)
+      .json({
+        error: "No reconocí esa playlist. Pega el link completo de YouTube.",
+      });
   }
 
   // No permitir cargar la misma playlist dos veces en esta sesión
@@ -399,6 +439,26 @@ app.post("/api/volume", requireAdmin, (req, res) => {
   volume = v;
   broadcast();
   res.json({ ok: true, volume });
+});
+
+/* ---------------- Volumen por canción (admin) ----------------
+   Guarda una ganancia específica para un videoId. Compartido y persistido. */
+app.post("/api/song-volume", requireAdmin, (req, res) => {
+  const videoId = req.body?.videoId;
+  let v = Number(req.body?.volume);
+  if (!videoId || Number.isNaN(v)) {
+    return res.status(400).json({ error: "Datos inválidos." });
+  }
+  v = Math.max(0, Math.min(100, Math.round(v)));
+  // 70 es el valor neutro por defecto; si lo dejan ahí, borramos el ajuste
+  if (v === 70) {
+    delete songVolumes[videoId];
+  } else {
+    songVolumes[videoId] = v;
+  }
+  saveSongVolumes();
+  broadcast();
+  res.json({ ok: true, videoId, volume: v });
 });
 
 /* ---------------- Saltar / borrar todo (admin) ---------------- */
